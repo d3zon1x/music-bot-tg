@@ -1,18 +1,30 @@
 # handlers/messages.py
+
 import logging
-from telegram import Update
-from telegram.ext import MessageHandler, filters, CallbackContext
-from utils.download import download_music
 import os
-import asyncio
+from telegram import Update, InputFile
+from telegram.ext import CallbackContext
+from utils.download import (
+    download_music_with_metadata,
+    download_thumbnail,
+    download_music,
+    fetch_youtube_metadata,
+    recognize_song
+)
+from utils.sanitize import format_duration, format_filesize
+
+def format_duration_local(sec):
+    m, s = divmod(sec, 60)
+    return f"{m}:{s:02d}"
 
 async def buttons_handler(update: Update, context: CallbackContext) -> None:
     text = update.message.text
-    logging.info(f"📩 Натиснута кнопка: {text}")
+    logging.info(f"📩 Користувач натиснув кнопку: {text}")
 
     if text == "📥 Завантажити пісню":
         await update.message.reply_text("🎵 Введіть назву пісні для завантаження:")
         context.user_data["awaiting_song"] = True
+        logging.info("⏳ Очікується назва пісні від користувача")
     elif text == "🔍 Пошук музики":
         await update.message.reply_text("🔎 Введіть ім'я виконавця або пісню для пошуку:")
     elif text == "🎶 Розпізнати пісню":
@@ -26,29 +38,57 @@ async def buttons_handler(update: Update, context: CallbackContext) -> None:
 
 async def text_message_handler(update: Update, context: CallbackContext) -> None:
     text = update.message.text
-    logging.info(f"📩 Отримано текст: {text}")
+    logging.info(f"📩 Користувач надіслав текст: {text}")
+
     if context.user_data.get("awaiting_song", False):
         context.user_data["awaiting_song"] = False
-        logging.info(f"🎵 Назва пісні: {text}")
-        # Викликаємо завантаження музики
-        await send_music_wrapper(update, context, text)
+        logging.info(f"🎵 Отримано назву пісні для завантаження: {text}")
+        await send_music_with_thumb(update, context, text)
     else:
         await update.message.reply_text("❌ Невідома команда. Використовуйте клавіатуру для вибору дій.")
 
-async def send_music_wrapper(update: Update, context: CallbackContext, query: str) -> None:
+async def send_music_with_thumb(update: Update, context: CallbackContext, query: str) -> None:
     logging.info(f"🔍 Обробка завантаження пісні: {query}")
-    await update.message.reply_text(f"🔍 Шукаю {query}...")
-    file_path = download_music(query)
-    if file_path and os.path.exists(file_path):
-        try:
-            with open(file_path, 'rb') as audio:
-                await update.message.reply_audio(audio=audio)
-            logging.info(f"✅ Пісня відправлена: {file_path}")
-        except Exception as e:
-            logging.error(f"❌ Помилка відправлення: {e}")
-            await update.message.reply_text("❌ Помилка відправлення пісні.")
-    else:
-        await update.message.reply_text("❌ Не вдалося знайти пісню. Спробуйте ще раз.")
+    await update.message.reply_text(f"⬇️ Шукаю і Завантажую: {query}...")
 
-buttons_handler = MessageHandler(filters.TEXT & filters.Regex("^(📥 Завантажити пісню|🔍 Пошук музики|🎶 Розпізнати пісню|📃 Отримати текст пісні|🎧 Рекомендації)$"), buttons_handler)
-text_message_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler)
+    # Завантаження аудіо і метаданих
+    filename, title, duration, uploader, thumb_url = download_music_with_metadata(query)
+    if not filename or not os.path.exists(filename):
+        await update.message.reply_text("❌ Не вдалося знайти пісню. Спробуйте ще раз.")
+        return
+
+    # duration_str = format_duration(duration) if duration else "N/A"
+    # info_msg = f"Надсилаю:\n{title}\nТривалість: {duration_str}\nВиконавець: {uploader}"
+    # await update.message.reply_text(info_msg)
+
+    # Завантажуємо і зменшуємо thumbnail
+    thumb_path = download_thumbnail(thumb_url, 'thumb.jpg', 200)
+
+    try:
+        with open(filename, 'rb') as audio_file:
+            audio_input = InputFile(audio_file, filename=os.path.basename(filename))
+            if thumb_path and os.path.exists(thumb_path):
+                with open(thumb_path, 'rb') as thumb_file:
+                    thumb_input = InputFile(thumb_file, filename=os.path.basename(thumb_path))
+                    # Передаємо thumb через api_kwargs
+                    await update.message.reply_audio(
+                        audio=audio_input,
+                        title=title,
+                        performer=uploader,
+                        duration=duration if duration else 0,
+                        caption="@music_for_weyymss_bot",
+                        api_kwargs={"thumb": thumb_input}
+                    )
+            else:
+                await update.message.reply_audio(
+                    audio=audio_input,
+                    title=title,
+                    performer=uploader,
+                    caption="@music_for_weyymss_bot",
+                    duration=duration if duration else 0
+                )
+        logging.info(f"✅ Пісня відправлена: {filename}")
+
+    except Exception as e:
+        logging.error(f"❌ Помилка надсилання аудіофайлу: {e}")
+        await update.message.reply_text("❌ Виникла помилка при відправленні пісні.")# Реєстрація хендлерів, які можна додати в bot.py
