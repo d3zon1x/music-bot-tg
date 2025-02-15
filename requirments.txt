@@ -1,0 +1,5 @@
+nest_asyncio
+yt_dlp
+requests
+python-telegram-bot==20.0a6
+ffmpeg-python
