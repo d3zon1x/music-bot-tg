@@ -10,7 +10,7 @@ from utils.download import (
     download_thumbnail,
     download_music,
     fetch_youtube_metadata,
-    recognize_song, search_music
+    recognize_song, search_music, get_lyrics
 )
 from utils.sanitize import format_duration, format_filesize
 
@@ -35,6 +35,8 @@ async def buttons_handler(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("🎤 Надішліть голосове повідомлення з піснею.")
     elif text == "📃 Отримати текст пісні":
         await update.message.reply_text("📜 Введіть назву пісні для отримання тексту:")
+        context.user_data["mode"] = "lyrics"  # Режим отримання тексту
+        logging.info("⏳ Режим отримання тексту увімкнено")
     elif text == "🎧 Рекомендації":
         await update.message.reply_text("✨ Введіть назву улюбленого виконавця – я підберу щось схоже.")
     else:
@@ -55,6 +57,11 @@ async def text_message_handler(update: Update, context: CallbackContext) -> None
         context.user_data["mode"] = None
         logging.info(f"🎵 Запит для пошуку музики: {text}")
         await send_search_results(update, context, text)
+    elif mode == "lyrics":
+        # Режим отримання тексту пісні
+        context.user_data["mode"] = None
+        logging.info(f"📜 Запит для отримання тексту: {text}")
+        await send_lyrics(update, context)
     else:
         await update.message.reply_text("❌ Невідома команда. Використовуйте клавіатуру для вибору дій.")
 
@@ -73,6 +80,20 @@ async def send_search_results(update: Update, context: CallbackContext, query: s
         msg = f"* {res['title']}*\nВиконавець: {res['uploader']}\nТривалість: {duration_str}\n[Переглянути]({res['url']})\n\n"
         await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
+
+async def send_lyrics(update: Update, context: CallbackContext) -> None:
+    query = update.message.text
+    logging.info(f"🔍 Отримання тексту для пісні: {query}")
+    await update.message.reply_text("🔍 Отримую текст пісні, зачекайте...")
+    lyrics = get_lyrics(query)
+    if not lyrics:
+        await update.message.reply_text("❌ Не вдалося отримати текст пісні.")
+        return
+    # Розбиваємо текст на частини (Telegram обмежує повідомлення до ~4096 символів)
+    max_length = 4000
+    parts = [lyrics[i:i+max_length] for i in range(0, len(lyrics), max_length)]
+    for part in parts:
+        await update.message.reply_text(part)
 
 
 # Якщо потрібно, можна додати відповідний хендлер:

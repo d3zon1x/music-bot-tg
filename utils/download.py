@@ -4,7 +4,10 @@ import os
 import requests
 import yt_dlp
 import logging
+from bs4 import BeautifulSoup
 from PIL import Image
+
+from config import GENIUS_API_KEY
 from utils.sanitize import sanitize_filename, format_duration, format_filesize
 
 def fetch_youtube_metadata(query):
@@ -124,6 +127,43 @@ def search_music(query, max_results=1):
                 }
                 results.append(result)
     return results
+
+def get_lyrics(song_query):
+    search_url = f"https://api.genius.com/search?q={song_query}"
+    headers = {"Authorization": f"Bearer {GENIUS_API_KEY}"}
+
+    try:
+        response = requests.get(search_url, headers=headers, timeout=10)
+        data = response.json()
+        hits = data.get("response", {}).get("hits", [])
+        if not hits:
+            logging.error("❌ Не знайдено результатів для пошуку лірики.")
+            return None
+        song_url = hits[0]["result"]["url"]
+    except Exception as e:
+        logging.error(f"❌ Помилка пошуку в Genius API: {e}")
+        return None
+
+    # Скрапимо текст пісні з URL сторінки
+    headers_scrape = {"User-Agent": "Mozilla/5.0"}
+    try:
+        page = requests.get(song_url, headers=headers_scrape, timeout=10)
+        if page.status_code != 200:
+            logging.error(f"❌ Не вдалося завантажити сторінку з лірикою: статус {page.status_code}")
+            return None
+
+        soup = BeautifulSoup(page.text, "html.parser")
+        # Genius використовує новий markup: шукаємо всі div з data-lyrics-container="true"
+        containers = soup.find_all("div", attrs={"data-lyrics-container": "true"})
+        if not containers:
+            logging.error("❌ Не вдалося знайти елементи з текстом пісні.")
+            return None
+
+        lyrics = "\n".join([container.get_text(separator="\n", strip=True) for container in containers])
+        return lyrics.strip()
+    except Exception as e:
+        logging.error(f"❌ Помилка скрапінгу лірики: {e}")
+        return None
 
 def recognize_song(file_path):
     """

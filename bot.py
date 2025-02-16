@@ -5,7 +5,7 @@ import asyncio
 import logging
 from telegram.ext import Application
 from handlers.commands import start_command_handler
-from handlers.messages import text_message_handler, buttons_handler, search_music_handler
+from handlers.messages import text_message_handler, buttons_handler, search_music_handler, send_lyrics
 from handlers.voice import voice_message_handler
 from telegram.ext import CommandHandler, MessageHandler, filters
 from handlers.commands import start_command_handler  # з твого commands.py
@@ -34,8 +34,6 @@ text_message_handler = MessageHandler(
 
 async def main():
     app = Application.builder().token(TOKEN).build()
-
-
 
     app.add_handler(start_command_handler)
     app.add_handler(buttons_handler)
