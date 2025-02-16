@@ -2,9 +2,9 @@
 
 import logging
 import os
-from telegram import Update, InputFile
+from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
-from telegram.ext import CallbackContext, MessageHandler, filters
+from telegram.ext import CallbackContext, MessageHandler, filters, CallbackQueryHandler
 from utils.download import (
     download_music_with_metadata,
     download_thumbnail,
@@ -65,20 +65,59 @@ async def text_message_handler(update: Update, context: CallbackContext) -> None
     else:
         await update.message.reply_text("❌ Невідома команда. Використовуйте клавіатуру для вибору дій.")
 
+async def download_callback(update: Update, context: CallbackContext) -> None:
+    query_obj = update.callback_query
+    await query_obj.answer()  # обов'язково відповідаємо на callback
 
+    await query_obj.edit_message_reply_markup(reply_markup=None)
+
+    data = query_obj.data  # наприклад, "download_0"
+    try:
+        index = int(data.split("_")[1])
+    except (IndexError, ValueError):
+        await query_obj.edit_message_text("❌ Некоректний вибір.")
+        return
+
+    results = context.user_data.get('search_results', [])
+    if index < 0 or index >= len(results):
+        await query_obj.edit_message_text("❌ Некоректний вибір.")
+        return
+
+    # Наприклад, використовуємо title з результатів як запит для завантаження.
+    track_query = results[index]['title']
+    # await query_obj.edit_message_text(f"🔍 Завантаження треку: {track_query}...")
+    logging.info(f"🔍 Завантаження треку: {track_query}")
+    # Викликаємо функцію завантаження з обкладинкою (яка має бути визначена, наприклад, send_music_with_thumb)
+    from handlers.messages import send_music_with_thumb  # імпортуємо, якщо потрібно
+    await send_music_with_thumb(update, context, track_query)
+
+# Реєструємо callback handler
+download_callback_handler = CallbackQueryHandler(download_callback, pattern="^download_")
 
 async def send_search_results(update: Update, context: CallbackContext, query: str) -> None:
     logging.info(f"🔍 Виконується пошук музики: {query}")
     await update.message.reply_text(f"🔍 Шукаю музику за запитом: {query}...")
-    # Функція search_music має повернути список словників з метаданими
-    results = search_music(query)
+
+    results = search_music(query)  # має повернути список результатів, наприклад:
+    # [{'title': 'Song Title', 'duration': 210, 'uploader': 'Artist Name', 'url': 'https://...'}, ...]
     if not results:
         await update.message.reply_text("❌ Результатів не знайдено.")
         return
+
+    # Зберігаємо результати в user_data для подальшого використання в callbackQuery
+    context.user_data['search_results'] = results
+
+    msg = "Знайдено наступні варіанти:\n\n"
+    keyboard = []
     for i, res in enumerate(results, start=1):
         duration_str = format_duration(res['duration']) if res['duration'] else "N/A"
         msg = f"* {res['title']}*\nВиконавець: {res['uploader']}\nТривалість: {duration_str}\n[Переглянути]({res['url']})\n\n"
-        await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+        # Створюємо кнопку для завантаження цього треку
+        # callback_data "download_<index>" (індекс починається з 0)
+        keyboard.append([InlineKeyboardButton(text="Завантажити", callback_data=f"download_{i - 1}")])
+
+    inline_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN, reply_markup=inline_markup)
 
 
 async def send_lyrics(update: Update, context: CallbackContext) -> None:
@@ -104,30 +143,31 @@ search_music_handler = MessageHandler(
 
 
 async def send_music_with_thumb(update: Update, context: CallbackContext, query: str) -> None:
-    logging.info(f"🔍 Обробка завантаження пісні: {query}")
-    await update.message.reply_text(f"⬇️ Шукаю і Завантажую: {query}...")
+    # Отримуємо об'єкт повідомлення: якщо це callback query, беремо його повідомлення
+    msg_obj = update.message if update.message is not None else update.callback_query.message
+    await msg_obj.reply_text(f"⬇️ Шукаю і Завантажую: {query}...")
 
-    # Завантаження аудіо і метаданих
+    # Завантажуємо аудіо та метадані
     filename, title, duration, uploader, thumb_url = download_music_with_metadata(query)
     if not filename or not os.path.exists(filename):
-        await update.message.reply_text("❌ Не вдалося знайти пісню. Спробуйте ще раз.")
+        await msg_obj.reply_text("❌ Не вдалося знайти пісню. Спробуйте ще раз.")
         return
 
     # duration_str = format_duration(duration) if duration else "N/A"
     # info_msg = f"Надсилаю:\n{title}\nТривалість: {duration_str}\nВиконавець: {uploader}"
-    # await update.message.reply_text(info_msg)
+    # await msg_obj.reply_text(info_msg)
 
-    # Завантажуємо і зменшуємо thumbnail
+    # Завантажуємо та зменшуємо thumbnail
     thumb_path = download_thumbnail(thumb_url, 'thumb.jpg', 200)
 
     try:
         with open(filename, 'rb') as audio_file:
+            from telegram import InputFile
             audio_input = InputFile(audio_file, filename=os.path.basename(filename))
             if thumb_path and os.path.exists(thumb_path):
                 with open(thumb_path, 'rb') as thumb_file:
                     thumb_input = InputFile(thumb_file, filename=os.path.basename(thumb_path))
-                    # Передаємо thumb через api_kwargs
-                    await update.message.reply_audio(
+                    await msg_obj.reply_audio(
                         audio=audio_input,
                         title=title,
                         performer=uploader,
@@ -136,16 +176,13 @@ async def send_music_with_thumb(update: Update, context: CallbackContext, query:
                         api_kwargs={"thumb": thumb_input}
                     )
             else:
-                await update.message.reply_audio(
+                await msg_obj.reply_audio(
                     audio=audio_input,
                     title=title,
                     performer=uploader,
-                    caption="@music_for_weyymss_bot",
                     duration=duration if duration else 0
                 )
         logging.info(f"✅ Пісня відправлена: {filename}")
-        await update.message.reply_text("🔍Введіть назву пісні або виберіть іншу дію.")
-
     except Exception as e:
         logging.error(f"❌ Помилка надсилання аудіофайлу: {e}")
-        await update.message.reply_text("❌ Виникла помилка при відправленні пісні.")# Реєстрація хендлерів, які можна додати в bot.py
+        await msg_obj.reply_text("❌ Виникла помилка при відправленні пісні.")
