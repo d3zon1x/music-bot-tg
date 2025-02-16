@@ -101,6 +101,30 @@ def download_thumbnail(url, out_path='thumb.jpg', max_size_kb=200):
         logging.error(f"Помилка завантаження thumbnail: {e}")
         return None
 
+def search_music(query, max_results=1):
+    """
+    Виконує пошук музики за запитом (без завантаження файлів) та повертає список результатів.
+    Повертає список словників, кожен містить 'title', 'duration', 'uploader' та 'url' (посилання на YouTube).
+    """
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': 'music/%(title)s.%(ext)s',
+    }
+    results = []
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        # Використовуємо ytsearchN: де N — кількість результатів
+        info = ydl.extract_info(f"ytsearch{max_results}:{query}", download=False)
+        if 'entries' in info:
+            for entry in info['entries']:
+                result = {
+                    'title': entry.get('title', 'Unknown'),
+                    'duration': entry.get('duration', 0),
+                    'uploader': entry.get('uploader', 'Unknown'),
+                    'url': entry.get('webpage_url', '')
+                }
+                results.append(result)
+    return results
+
 def recognize_song(file_path):
     """
     Розпізнає пісню через Audd.io.

@@ -3,13 +3,14 @@
 import logging
 import os
 from telegram import Update, InputFile
-from telegram.ext import CallbackContext
+from telegram.constants import ParseMode
+from telegram.ext import CallbackContext, MessageHandler, filters
 from utils.download import (
     download_music_with_metadata,
     download_thumbnail,
     download_music,
     fetch_youtube_metadata,
-    recognize_song
+    recognize_song, search_music
 )
 from utils.sanitize import format_duration, format_filesize
 
@@ -21,12 +22,15 @@ async def buttons_handler(update: Update, context: CallbackContext) -> None:
     text = update.message.text
     logging.info(f"📩 Користувач натиснув кнопку: {text}")
 
-    if text == "📥 Завантажити пісню":
-        await update.message.reply_text("🎵 Введіть назву пісні для завантаження:")
-        context.user_data["awaiting_song"] = True
-        logging.info("⏳ Очікується назва пісні від користувача")
-    elif text == "🔍 Пошук музики":
+
+    if text == "🔍 Пошук відео кліпу":
         await update.message.reply_text("🔎 Введіть ім'я виконавця або пісню для пошуку:")
+        context.user_data["mode"] = "search"  # Встановлюємо режим пошуку
+        logging.info("⏳ Режим пошуку увімкнено")
+    elif text == "📥 Завантажити пісню":
+        await update.message.reply_text("🎵 Введіть назву пісні для завантаження:")
+        context.user_data["mode"] = "download"  # Режим завантаження
+        logging.info("⏳ Режим завантаження увімкнено")
     elif text == "🎶 Розпізнати пісню":
         await update.message.reply_text("🎤 Надішліть голосове повідомлення з піснею.")
     elif text == "📃 Отримати текст пісні":
@@ -40,12 +44,43 @@ async def text_message_handler(update: Update, context: CallbackContext) -> None
     text = update.message.text
     logging.info(f"📩 Користувач надіслав текст: {text}")
 
-    if context.user_data.get("awaiting_song", False):
-        context.user_data["awaiting_song"] = False
-        logging.info(f"🎵 Отримано назву пісні для завантаження: {text}")
-        await send_music_with_thumb(update, context, text)
+    mode = context.user_data.get("mode")
+    if mode == "download":
+        # Режим завантаження пісні
+        context.user_data["mode"] = "download"
+        logging.info(f"🎵 Назва пісні для завантаження: {text}")
+        await send_music_with_thumb(update, context, text)  # Функція завантаження з обкладинкою
+    elif mode == "search":
+        # Режим пошуку музики
+        context.user_data["mode"] = None
+        logging.info(f"🎵 Запит для пошуку музики: {text}")
+        await send_search_results(update, context, text)
     else:
         await update.message.reply_text("❌ Невідома команда. Використовуйте клавіатуру для вибору дій.")
+
+
+
+async def send_search_results(update: Update, context: CallbackContext, query: str) -> None:
+    logging.info(f"🔍 Виконується пошук музики: {query}")
+    await update.message.reply_text(f"🔍 Шукаю музику за запитом: {query}...")
+    # Функція search_music має повернути список словників з метаданими
+    results = search_music(query)
+    if not results:
+        await update.message.reply_text("❌ Результатів не знайдено.")
+        return
+    for i, res in enumerate(results, start=1):
+        duration_str = format_duration(res['duration']) if res['duration'] else "N/A"
+        msg = f"* {res['title']}*\nВиконавець: {res['uploader']}\nТривалість: {duration_str}\n[Переглянути]({res['url']})\n\n"
+        await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+
+
+
+# Якщо потрібно, можна додати відповідний хендлер:
+search_music_handler = MessageHandler(
+    filters.TEXT & filters.Regex("^🔍 Пошук музики$"),
+    send_search_results  # Або окрема функція, що спочатку просить запит, а потім викликає send_search_results
+)
+
 
 async def send_music_with_thumb(update: Update, context: CallbackContext, query: str) -> None:
     logging.info(f"🔍 Обробка завантаження пісні: {query}")
@@ -88,6 +123,7 @@ async def send_music_with_thumb(update: Update, context: CallbackContext, query:
                     duration=duration if duration else 0
                 )
         logging.info(f"✅ Пісня відправлена: {filename}")
+        await update.message.reply_text("🔍Введіть назву пісні або виберіть іншу дію.")
 
     except Exception as e:
         logging.error(f"❌ Помилка надсилання аудіофайлу: {e}")
