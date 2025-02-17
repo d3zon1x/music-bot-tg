@@ -10,7 +10,7 @@ from PIL import Image
 from config import GENIUS_API_KEY
 from utils.sanitize import sanitize_filename, format_duration, format_filesize
 
-def fetch_youtube_metadata(query):
+async def fetch_youtube_metadata(query):
     """
     Отримує базову інформацію про трек (без завантаження):
       - title (назва)
@@ -36,7 +36,7 @@ def fetch_youtube_metadata(query):
         }
     return meta
 
-def download_music(query):
+async def download_music(query):
     """
     Завантажує аудіо (перший результат) за запитом.
     Повертає шлях до .mp3-файлу або None, якщо не знайдено.
@@ -64,21 +64,21 @@ def download_music(query):
             logging.error(f"❌ Файл не знайдено: {filename}")
             return None
 
-def download_music_with_metadata(query):
+async def download_music_with_metadata(query):
     """
     Спочатку отримує метадані (title, duration, uploader, thumbnail),
     потім завантажує аудіо, повертає:
       (filename, title, duration, uploader, thumbnail)
     """
-    meta = fetch_youtube_metadata(query)
+    meta = await fetch_youtube_metadata(query)
     title = meta['title']
     duration = meta['duration']
     uploader = meta['uploader']
     thumbnail = meta['thumbnail']
-    filename = download_music(query)
+    filename = await download_music(query)
     return filename, title, duration, uploader, thumbnail
 
-def download_thumbnail(url, out_path='thumb.jpg', max_size_kb=200):
+async def download_thumbnail(url, out_path='thumb.jpg', max_size_kb=200):
     """
     Завантажує thumbnail за URL і зменшує його, поки не стане <200 KB.
     Повертає шлях до файлу або None, якщо не вдалося завантажити.
@@ -104,7 +104,7 @@ def download_thumbnail(url, out_path='thumb.jpg', max_size_kb=200):
         logging.error(f"Помилка завантаження thumbnail: {e}")
         return None
 
-def search_music(query, max_results=1):
+async def search_music(query, max_results=1):
     """
     Виконує пошук музики за запитом (без завантаження файлів) та повертає список результатів.
     Повертає список словників, кожен містить 'title', 'duration', 'uploader' та 'url' (посилання на YouTube).
@@ -128,7 +128,7 @@ def search_music(query, max_results=1):
                 results.append(result)
     return results
 
-def get_lyrics(song_query):
+async def get_lyrics(song_query):
     search_url = f"https://api.genius.com/search?q={song_query}"
     headers = {"Authorization": f"Bearer {GENIUS_API_KEY}"}
 
@@ -165,7 +165,7 @@ def get_lyrics(song_query):
         logging.error(f"❌ Помилка скрапінгу лірики: {e}")
         return None
 
-def recognize_song(file_path):
+async def recognize_song(file_path):
     """
     Розпізнає пісню через Audd.io.
     Повертає назву треку або 'Не вдалося розпізнати трек'.
