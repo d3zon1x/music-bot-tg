@@ -7,11 +7,10 @@ nest_asyncio.apply()
 import asyncio
 import logging
 from telegram.ext import Application, CallbackQueryHandler
-from handlers.commands import start_command_handler
-from handlers.messages import text_message_handler, buttons_handler, search_music_handler, send_lyrics, \
-    download_callback
+from handlers.messages import text_message_handler, \
+    download_callback, recommendations_callback, send_search_results
 from handlers.voice import voice_message_handler
-from telegram.ext import CommandHandler, MessageHandler, filters
+from telegram.ext import MessageHandler, filters
 from handlers.commands import start_command_handler  # з твого commands.py
 from handlers.messages import buttons_handler
 from handlers.voice import voice_message_handler  # якщо є voice
@@ -33,6 +32,13 @@ text_message_handler = MessageHandler(
     text_message_handler
 )
 
+search_music_handler = MessageHandler(
+    filters.TEXT & filters.Regex("^🔍 Пошук музики$"),
+    send_search_results  # Або окрема функція, що спочатку просить запит, а потім викликає send_search_results
+)
+
+reco_callback_handler = CallbackQueryHandler(recommendations_callback, pattern="^reco_")
+
 async def main():
     app = Application.builder().token(TOKEN).build()
 
@@ -43,7 +49,8 @@ async def main():
     app.add_handler(text_message_handler)
     app.add_handler(search_music_handler)
     app.add_handler(voice_message_handler)
-    # Якщо потрібен callback handler для inline кнопок, його теж додаємо
+    app.add_handler(CallbackQueryHandler(reco_callback_handler, pattern="^reco_"))
+
     app.add_handler(CallbackQueryHandler(download_callback, pattern="^download_"))
 
     print("🎵 Бот запущений!")
