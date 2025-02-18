@@ -1,12 +1,14 @@
 # handlers/messages.py
-
+import asyncio
 import logging
 import os
 import urllib.parse
 
+import yt_dlp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.constants import ParseMode
 from telegram.ext import CallbackContext, MessageHandler, filters, CallbackQueryHandler
+from yt_dlp import YoutubeDL
 
 from sqlDb.db import insert_search
 from utils.download import (
@@ -103,7 +105,6 @@ async def download_callback(update: Update, context: CallbackContext) -> None:
     from handlers.messages import send_music_with_thumb
     await send_music_with_thumb(update, context, video_url)
 # Реєструємо callback handler
-download_callback_handler = CallbackQueryHandler(download_callback, pattern="^download_")
 
 async def send_search_results(update: Update, context: CallbackContext, query: str) -> None:
     logging.info(f"🔍 Виконується пошук музики: {query}")
@@ -118,7 +119,7 @@ async def send_search_results(update: Update, context: CallbackContext, query: s
     for i, res in enumerate(results, start=1):
         duration_str = format_duration(res['duration']) if res['duration'] else "N/A"
         msg += f"*{i}. {res['title']}*\nВиконавець: {res['uploader']}\nТривалість: {duration_str}\n[Переглянути]({res['url']})\n\n"
-        keyboard.append([InlineKeyboardButton(text="Завантажити", callback_data=f"download_{i - 1}")])
+        keyboard.append([InlineKeyboardButton(text="Завантажити", callback_data=f"download_{res['url']}")])
     inline_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN, reply_markup=inline_markup)
 
@@ -185,23 +186,72 @@ async def recommendations_callback(update: Update, context: CallbackContext) -> 
         #     f"[Переглянути на YouTube]({result['url']})"
         # )
 
-
-
-
-
-
-# Якщо потрібно, можна додати відповідний хендлер:
-
-
+def progress_hook_factory(bot, chat_id, message_id, loop):
+    def progress_hook(d):
+        if d.get('status') == 'downloading':
+            total = d.get('total_bytes') or d.get('total_bytes_estimate')
+            if total:
+                downloaded = d.get('downloaded_bytes', 0)
+                percent = downloaded / total * 100
+                # Використовуємо run_coroutine_threadsafe для запуску корутини у головному event loop
+                future = asyncio.run_coroutine_threadsafe(
+                    bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=f"⬇️ Завантаження: {percent:.1f}%"
+                    ),
+                    loop
+                )
+                # Якщо потрібно, можна додати обробку результату:
+                try:
+                    future.result()
+                except Exception as e:
+                    if "Message is not modified" in str(e):
+                        pass
+                    else:
+                        logging.error(f"Error updating progress: {e}")
+    return progress_hook
 
 async def send_music_with_thumb(update: Update, context: CallbackContext, query: str) -> None:
     msg_obj = update.message if update.message is not None else update.callback_query.message
-    await msg_obj.reply_text(f"⬇️Завантажую: {query}...", disable_web_page_preview=True)
-    filename, title, duration, uploader, thumb_url = await download_music_with_metadata(query)
+    progress_message = await msg_obj.reply_text(f"⬇️ Пошук: {query}", disable_web_page_preview=True)
+    chat_id = progress_message.chat_id
+    message_id = progress_message.message_id
+
+    # Отримуємо головний event loop
+    main_loop = asyncio.get_running_loop()
+
+    def download():
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"ytsearch:{query}", download=True)
+            if 'entries' in info:
+                info = info['entries'][0]
+            filename = ydl.prepare_filename(info)
+            filename = filename.replace('.webm', '.mp3').replace('.m4a', '.mp3')
+            return info, filename
+
+    bot = context.bot
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': 'music/%(title)s.%(ext)s',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'progress_hooks': [progress_hook_factory(bot, chat_id, message_id, main_loop)],
+    }
+
+    # Завантаження в окремому потоці
+    info, filename = await asyncio.to_thread(download)
+
     if not filename or not os.path.exists(filename):
         await msg_obj.reply_text("❌ Не вдалося знайти пісню. Спробуйте ще раз.")
         return
+
+    thumb_url = info.get('thumbnail')
     thumb_path = await download_thumbnail(thumb_url, 'thumb.jpg', 200)
+
     try:
         with open(filename, 'rb') as audio_file:
             audio_input = InputFile(audio_file, filename=os.path.basename(filename))
@@ -210,23 +260,29 @@ async def send_music_with_thumb(update: Update, context: CallbackContext, query:
                     thumb_input = InputFile(thumb_file, filename=os.path.basename(thumb_path))
                     await msg_obj.reply_audio(
                         audio=audio_input,
-                        title=title,
-                        performer=uploader,
-                        duration=duration if duration else 0,
+                        title=info.get('title', 'Unknown'),
+                        performer=info.get('uploader', 'Unknown'),
+                        duration=info.get('duration', 0),
                         caption="@music_for_weyymss_bot",
                         api_kwargs={"thumb": thumb_input}
                     )
             else:
                 await msg_obj.reply_audio(
                     audio=audio_input,
-                    title=title,
-                    performer=uploader,
-                    duration=duration if duration else 0
+                    title=info.get('title', 'Unknown'),
+                    performer=info.get('uploader', 'Unknown'),
+                    duration=info.get('duration', 0)
                 )
         logging.info(f"✅ Пісня відправлена: {filename}")
-        await insert_song_bd(user_id, username, uploader, title)
+        await insert_song_bd(user_id, username, info.get('uploader', 'Unknown'), info.get('title', 'Unknown'))
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=f"{info.get('title', 'Unknown')} ✅\nНадішли назву пісні або обири іншу дію."
+        )
     except Exception as e:
         logging.error(f"❌ Помилка надсилання аудіофайлу: {e}")
         await msg_obj.reply_text("❌ Виникла помилка при відправленні пісні.")
 
 
+download_callback_handler = CallbackQueryHandler(download_callback, pattern="^download_")

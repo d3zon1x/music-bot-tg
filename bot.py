@@ -37,6 +37,8 @@ search_music_handler = MessageHandler(
     send_search_results  # Або окрема функція, що спочатку просить запит, а потім викликає send_search_results
 )
 
+
+
 reco_callback_handler = CallbackQueryHandler(recommendations_callback, pattern="^reco_")
 
 async def main():
