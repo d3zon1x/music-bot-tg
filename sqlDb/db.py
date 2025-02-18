@@ -13,7 +13,7 @@ def create_connection():
         print(e)
     return conn
 
-def init_db():
+async def init_db():
     conn = create_connection()
     if conn is not None:
         create_table_sql = """
@@ -21,6 +21,7 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT,
                 username TEXT,
+                artist_query TEXT,
                 song_query TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             );
@@ -36,19 +37,31 @@ def init_db():
     else:
         print("Помилка! Не вдалося створити з'єднання з базою даних.")
 
-def insert_search(user_id: str, username: str, song_query: str):
+async def insert_search(user_id: str, username: str, artist_query: str, song_query: str):
 
     conn = create_connection()
     sql = """
-        INSERT INTO user_searches (user_id, username, song_query)
-        VALUES (?, ?, ?)
+        INSERT INTO user_searches (user_id, username, artist_query, song_query)
+        VALUES (?, ?, ?, ?);
     """
     try:
         cur = conn.cursor()
-        cur.execute(sql, (user_id, username, song_query))
+        cur.execute(sql, (user_id, username, artist_query, song_query))
         conn.commit()
     except Error as e:
         print(e)
     finally:
         if conn:
             conn.close()
+
+async def get_recent_searches(user_id: str, limit: int = 25):
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT artist_query, song_query FROM user_searches WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
+        (user_id, limit)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"artist": row[0], "song": row[1]} for row in rows]
+

@@ -13,12 +13,13 @@ from utils.download import (
     search_music,
     get_lyrics
 )
+from utils.recommendations import get_recommendations
 from utils.sanitize import format_duration, format_filesize
 
 
 
-async def insert_song_bd(User_id, Username, text: str):
-    insert_search(User_id, Username, text)
+async def insert_song_bd(User_id, Username, artist: str, text: str):
+    await insert_search(User_id, Username, artist, text)
 
 def format_duration_local(sec):
     m, s = divmod(sec, 60)
@@ -30,7 +31,10 @@ async def buttons_handler(update: Update, context: CallbackContext) -> None:
 
     global user_id, username
     user_id = str(update.message.from_user.id)
+    result = await get_recommendations(user_id)
+    print(result)
     username = update.message.from_user.username or update.message.from_user.first_name
+
 
     if text == "🔍 Пошук відео кліпу":
         await update.message.reply_text("🔎 Введіть ім'я виконавця або пісню для пошуку:")
@@ -201,7 +205,7 @@ async def send_music_with_thumb(update: Update, context: CallbackContext, query:
 
         logging.info(f"✅ Пісня відправлена: {filename}")
 
-        await insert_song_bd(user_id, username, title)
+        await insert_song_bd(user_id, username, uploader, title)
     except Exception as e:
         logging.error(f"❌ Помилка надсилання аудіофайлу: {e}")
         await msg_obj.reply_text("❌ Виникла помилка при відправленні пісні.")
