@@ -49,7 +49,7 @@ async def main():
     app.add_handler(text_message_handler)
     app.add_handler(search_music_handler)
     app.add_handler(voice_message_handler)
-    app.add_handler(CallbackQueryHandler(reco_callback_handler, pattern="^reco_"))
+    app.add_handler(reco_callback_handler)
 
     app.add_handler(CallbackQueryHandler(download_callback, pattern="^download_"))
 

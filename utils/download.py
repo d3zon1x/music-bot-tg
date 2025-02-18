@@ -117,6 +117,7 @@ async def search_music(query, max_results=1):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         # Використовуємо ytsearchN: де N — кількість результатів
         info = ydl.extract_info(f"ytsearch{max_results}:{query}", download=False)
+        # info = ydl.extract_info(f"ytsearch{query}", download=False)
         if 'entries' in info:
             for entry in info['entries']:
                 result = {
@@ -126,6 +127,14 @@ async def search_music(query, max_results=1):
                     'url': entry.get('webpage_url', '')
                 }
                 results.append(result)
+
+    #     result = {
+    #         'title': info.get('title', 'Unknown'),
+    #         'duration': info.get('duration', 0),
+    #         'uploader': info.get('uploader', 'Unknown'),
+    #         'url': info.get('webpage_url', '')
+    # }
+    # results.append(result)
     return results
 
 async def get_lyrics(song_query):
