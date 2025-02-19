@@ -296,6 +296,14 @@ async def send_music_with_thumb(update: Update, context: CallbackContext, query:
             message_id=message_id,
             text=f"{info.get('title', 'Unknown')} ✅\n"
         )
+        try:
+            if os.path.exists(filename):
+                os.remove(filename)
+                logging.info(f"Файл '{filename}' успішно видалено.")
+            else:
+                logging.warning(f"Файл '{filename}' не знайдено.")
+        except Exception as e:
+            logging.error(f"Помилка при видаленні файлу '{filename}': {e}")
     except Exception as e:
         logging.error(f"❌ Помилка надсилання аудіофайлу: {e}")
         await msg_obj.reply_text("❌ Виникла помилка при відправленні пісні.")
