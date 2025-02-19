@@ -8,7 +8,7 @@ from telegram.constants import ParseMode
 from telegram.ext import CallbackContext, CallbackQueryHandler
 
 
-from sqlDb.db import insert_search
+from sqlDb.db import insert_search, get_recent_searches
 from utils.download import (
     download_thumbnail,
     search_music,
@@ -138,6 +138,13 @@ async def send_recommendations_menu(update: Update, context: CallbackContext) ->
         [InlineKeyboardButton("10 треків", callback_data="reco_10")],
         [InlineKeyboardButton("15 треків", callback_data="reco_15")]
     ]
+    recent_history = await get_recent_searches(user_id)
+    MIN_HISTORY = 5
+    if len(recent_history) < MIN_HISTORY:
+        await update.message.reply_text(
+            "❌ Недостатньо історії для рекомендацій. Будь ласка, завантажте більше треків, щоб отримати персональні рекомендації."
+        )
+        return
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("Виберіть кількість рекомендацій:", reply_markup=reply_markup)
     context.user_data["mode"] = "recommendations"
