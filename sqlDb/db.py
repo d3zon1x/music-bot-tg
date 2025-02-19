@@ -2,6 +2,8 @@
 import sqlite3
 from sqlite3 import Error
 
+from utils.sanitize import clean_track_info
+
 DATABASE = "music_bot.db"
 
 def create_connection():
@@ -38,7 +40,7 @@ async def init_db():
         print("Помилка! Не вдалося створити з'єднання з базою даних.")
 
 async def insert_search(user_id: str, username: str, artist_query: str, song_query: str):
-
+    artist_query, song_query = clean_track_info(artist_query, song_query)
     conn = create_connection()
     sql = """
         INSERT INTO user_searches (user_id, username, artist_query, song_query)
