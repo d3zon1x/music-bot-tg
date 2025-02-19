@@ -2,28 +2,24 @@
 import asyncio
 import logging
 import os
-import urllib.parse
 
-import yt_dlp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.constants import ParseMode
-from telegram.ext import CallbackContext, MessageHandler, filters, CallbackQueryHandler
-from yt_dlp import YoutubeDL
+from telegram.ext import CallbackContext, CallbackQueryHandler
+
 
 from sqlDb.db import insert_search
 from utils.download import (
-    download_music_with_metadata,
     download_thumbnail,
     search_music,
-    get_lyrics, fetch_youtube_metadata
+    get_lyrics, normalize_youtube_url
 )
 from utils.recommendations import get_recommendations
-from utils.sanitize import format_duration, format_filesize
+from utils.sanitize import format_duration
 
 
-
-async def insert_song_bd(User_id, Username, artist: str, text: str):
-    await insert_search(User_id, Username, artist, text)
+async def insert_song_bd(u_id, user, artist: str, text: str):
+    await insert_search(u_id, user, artist, text)
 
 def format_duration_local(sec):
     m, s = divmod(sec, 60)
@@ -102,7 +98,7 @@ async def download_callback(update: Update, context: CallbackContext) -> None:
     logging.info(f"🔍 Завантаження треку з URL: {video_url}")
     # Викликаємо функцію завантаження з обкладинкою, передаючи URL замість звичайного запиту.
     # При цьому функція send_music_with_thumb має бути оновлена для обробки прямого URL (якщо потрібно)
-    from handlers.messages import send_music_with_thumb
+
     await send_music_with_thumb(update, context, video_url)
 # Реєструємо callback handler
 
@@ -114,11 +110,10 @@ async def send_search_results(update: Update, context: CallbackContext, query: s
         await update.message.reply_text("❌ Результатів не знайдено.")
         return
     context.user_data['search_results'] = results
-    msg = "Знайдено наступні варіанти:\n\n"
     keyboard = []
     for i, res in enumerate(results, start=1):
         duration_str = format_duration(res['duration']) if res['duration'] else "N/A"
-        msg += f"*{i}. {res['title']}*\nВиконавець: {res['uploader']}\nТривалість: {duration_str}\n[Переглянути]({res['url']})\n\n"
+        msg = f"*{res['title']}*\n👤: {res['uploader']}\n🕑: {duration_str}\n[Переглянути]({res['url']})\n\n"
         keyboard.append([InlineKeyboardButton(text="Завантажити", callback_data=f"download_{res['url']}")])
     inline_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN, reply_markup=inline_markup)
@@ -170,7 +165,7 @@ async def recommendations_callback(update: Update, context: CallbackContext) -> 
         results = await search_music(rec['artist'] + " " + rec['title'])
         for i, res in enumerate(results, start=1):
             duration_str = format_duration(res['duration']) if res['duration'] else "N/A"
-            msg = f"*{i}. {res['title']}*\nВиконавець: {res['uploader']}\nТривалість: {duration_str}\n[Переглянути]({res['url']})\n\n"
+            msg = f"*{res['title']}*\n👤: {res['uploader']}\n🕑: {duration_str}\n[Переглянути]({res['url']})\n\n"
             # keyboard.append([InlineKeyboardButton(text="Завантажити", callback_data=f"download_{i - 1}")])
             keyboard = [
                 [InlineKeyboardButton("Завантажити", callback_data=f"download_{res['url']}")]
@@ -222,9 +217,18 @@ async def send_music_with_thumb(update: Update, context: CallbackContext, query:
     main_loop = asyncio.get_running_loop()
 
     def download():
+        from yt_dlp import YoutubeDL
         with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(f"ytsearch:{query}", download=True)
+            if query.startswith("http"):
+                normalized_query = normalize_youtube_url(query)
+                info = ydl.extract_info(f"ytsearch:{normalized_query}", download=True)
+            else:
+                info = ydl.extract_info(f"ytsearch:{query}", download=True)
+
             if 'entries' in info:
+                if not info['entries']:
+                    # Якщо список порожній – кидаємо виключення
+                    raise ValueError("No entries found for the query")
                 info = info['entries'][0]
             filename = ydl.prepare_filename(info)
             filename = filename.replace('.webm', '.mp3').replace('.m4a', '.mp3')
@@ -243,7 +247,12 @@ async def send_music_with_thumb(update: Update, context: CallbackContext, query:
     }
 
     # Завантаження в окремому потоці
-    info, filename = await asyncio.to_thread(download)
+    try:
+        info, filename = await asyncio.to_thread(download)
+    except Exception as e:
+        logging.error(f"❌ Помилка під час завантаження: {e}")
+        await msg_obj.reply_text("❌ Не вдалося знайти пісню. Спробуйте інший запит.")
+        return
 
     if not filename or not os.path.exists(filename):
         await msg_obj.reply_text("❌ Не вдалося знайти пісню. Спробуйте ще раз.")
@@ -278,7 +287,7 @@ async def send_music_with_thumb(update: Update, context: CallbackContext, query:
         await bot.edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
-            text=f"{info.get('title', 'Unknown')} ✅\nНадішли назву пісні або обири іншу дію."
+            text=f"{info.get('title', 'Unknown')} ✅\n"
         )
     except Exception as e:
         logging.error(f"❌ Помилка надсилання аудіофайлу: {e}")

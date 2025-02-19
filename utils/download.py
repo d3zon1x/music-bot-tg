@@ -1,6 +1,8 @@
 # utils/download.py
 
 import os
+import urllib.parse
+
 import requests
 import yt_dlp
 import logging
@@ -9,6 +11,28 @@ from PIL import Image
 
 from config import GENIUS_API_KEY
 from utils.sanitize import sanitize_filename, format_duration, format_filesize
+
+def normalize_youtube_url(url: str) -> str:
+    """
+    Приймає будь-яке посилання YouTube і повертає канонічне посилання виду:
+    "https://www.youtube.com/watch?v=VIDEO_ID"
+    """
+    parsed = urllib.parse.urlparse(url)
+    video_id = None
+    hostname = parsed.hostname.lower() if parsed.hostname else ''
+    if hostname in ['youtu.be']:
+        video_id = parsed.path.lstrip('/')
+    elif hostname in ['www.youtube.com', 'youtube.com']:
+        qs = urllib.parse.parse_qs(parsed.query)
+        video_id = qs.get('v', [None])[0]
+        # Якщо video_id не знайдено, перевіримо, чи є /embed/ або /v/ у шляху
+        if not video_id and parsed.path:
+            path_parts = parsed.path.split('/')
+            if 'embed' in path_parts or 'v' in path_parts:
+                video_id = path_parts[-1]
+    if video_id:
+        return f"https://www.youtube.com/watch?v={video_id}"
+    return url
 
 async def fetch_youtube_metadata(query):
     """
@@ -19,13 +43,20 @@ async def fetch_youtube_metadata(query):
       - thumbnail (URL обкладинки)
     Повертає словник з цими полями.
     """
-    logging.info(f"🔎 Отримую метадані для: {query}")
+    if query.startswith("http"):
+        normalized_query = normalize_youtube_url(query)
+        search_str = normalized_query
+    else:
+        search_str = f"ytsearch:{query}"
+
+    logging.info(f"🔎 Отримую метадані для: {search_str}")
+
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': 'music/%(title)s.%(ext)s',
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(f"ytsearch:{query}", download=False)
+        info = ydl.extract_info(search_str, download=False)
         if 'entries' in info:
             info = info['entries'][0]
         meta = {
@@ -39,9 +70,15 @@ async def fetch_youtube_metadata(query):
 async def download_music(query):
     """
     Завантажує аудіо (перший результат) за запитом.
+    Якщо query є URL, нормалізуємо його, інакше додаємо "ytsearch:".
     Повертає шлях до .mp3-файлу або None, якщо не знайдено.
     """
     logging.info(f"🎵 Завантажую музику: {query}")
+    if query.startswith("http"):
+        search_query = normalize_youtube_url(query)
+    else:
+        search_query = f"ytsearch:{query}"
+
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': 'music/%(title)s.%(ext)s',
@@ -51,9 +88,12 @@ async def download_music(query):
             'preferredquality': '192',
         }],
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(f"ytsearch:{query}", download=True)
+    from yt_dlp import YoutubeDL
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(search_query, download=True)
         if 'entries' in info:
+            if not info['entries']:
+                raise ValueError("No entries found for the query")
             info = info['entries'][0]
         filename = ydl.prepare_filename(info)
         filename = filename.replace('.webm', '.mp3').replace('.m4a', '.mp3')
@@ -66,21 +106,21 @@ async def download_music(query):
 
 async def download_music_with_metadata(query):
     """
-    Спочатку отримує метадані (title, duration, uploader, thumbnail),
-    потім завантажує аудіо, повертає:
-      (filename, title, duration, uploader, thumbnail)
+    Спочатку отримує метадані через fetch_youtube_metadata,
+    потім завантажує аудіо за допомогою download_music.
+    Повертає кортеж: (filename, title, duration, uploader, thumbnail)
     """
     meta = await fetch_youtube_metadata(query)
-    title = meta['title']
-    duration = meta['duration']
-    uploader = meta['uploader']
-    thumbnail = meta['thumbnail']
+    title = meta.get('title', 'Unknown')
+    duration = meta.get('duration', 0)
+    uploader = meta.get('uploader', 'Unknown')
+    thumbnail = meta.get('thumbnail', None)
     filename = await download_music(query)
     return filename, title, duration, uploader, thumbnail
 
 async def download_thumbnail(url, out_path='thumb.jpg', max_size_kb=200):
     """
-    Завантажує thumbnail за URL і зменшує його, поки не стане <200 KB.
+    Завантажує thumbnail за URL і зменшує його, поки не стане менше max_size_kb (у KB).
     Повертає шлях до файлу або None, якщо не вдалося завантажити.
     """
     if not url:
@@ -96,6 +136,7 @@ async def download_thumbnail(url, out_path='thumb.jpg', max_size_kb=200):
             img = Image.open(out_path)
             img.thumbnail((320, 320))
             img.save(out_path, optimize=True, quality=85)
+            # Якщо все ще перевищує ліміт, зменшуємо якість
             while os.path.getsize(out_path) > max_size_kb * 1024:
                 img = Image.open(out_path)
                 img.save(out_path, optimize=True, quality=70)
@@ -115,9 +156,8 @@ async def search_music(query, max_results=1):
     }
     results = []
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        # Використовуємо ytsearchN: де N — кількість результатів
+        # Використовуємо ytsearchN, де N — кількість результатів
         info = ydl.extract_info(f"ytsearch{max_results}:{query}", download=False)
-        # info = ydl.extract_info(f"ytsearch{query}", download=False)
         if 'entries' in info:
             for entry in info['entries']:
                 result = {
@@ -127,14 +167,6 @@ async def search_music(query, max_results=1):
                     'url': entry.get('webpage_url', '')
                 }
                 results.append(result)
-
-    #     result = {
-    #         'title': info.get('title', 'Unknown'),
-    #         'duration': info.get('duration', 0),
-    #         'uploader': info.get('uploader', 'Unknown'),
-    #         'url': info.get('webpage_url', '')
-    # }
-    # results.append(result)
     return results
 
 async def get_lyrics(song_query):

@@ -22,7 +22,7 @@ logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 buttons_handler = MessageHandler(
-    filters.TEXT & filters.Regex("^(📥 Завантажити пісню|🔍 Пошук відео кліпу|🎶 Розпізнати пісню|📃 Отримати текст пісні|🎧 Рекомендації)$"),
+    filters.TEXT & filters.Regex("^(📥 Завантажити пісню|🔍 Пошук відео кліпу|📃 Отримати текст пісні|🎧 Рекомендації)$"),
     buttons_handler
 )
 
